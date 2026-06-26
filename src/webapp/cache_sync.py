@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Bucket/prefix are env-configurable so the deployed task can point at a
 # same-region copy (e.g. an ap-northeast-1 mirror) without rebuilding the image.
-BUCKET = os.environ.get("FEIYANG_S3_BUCKET", "staking-ledger-bpt")
+BUCKET = os.environ.get("FEIYANG_S3_BUCKET", "hahacapital-jp")
 PREFIX = os.environ.get("FEIYANG_S3_PREFIX", "jojo_quant/ohlc/")
 
 

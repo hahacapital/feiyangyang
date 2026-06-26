@@ -28,7 +28,7 @@ commodity futures, refreshed daily) and backed up to S3. feiyangyang is a
 read-only **consumer** — pull the latest snapshot from S3:
 
 ```bash
-bash scripts/pull_cache.sh        # aws s3 sync s3://staking-ledger-bpt/jojo_quant/ohlc/ -> data/ohlc/
+bash scripts/pull_cache.sh        # aws s3 sync s3://hahacapital-jp/jojo_quant/ohlc/ -> data/ohlc/
 ```
 
 Requires the AWS CLI with read access to the bucket. `data/` is gitignored.
