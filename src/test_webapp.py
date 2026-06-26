@@ -105,10 +105,22 @@ def test_run_scan_primary_not_in_cache():
         pass
 
 
+def test_run_scan_filenotfound_becomes_primary_not_found():
+    import webapp.engine_service as es
+    es.warm_load({"GLD": make_df([100 + i for i in range(400)])})
+    es.set_primary_loader(lambda t: (_ for _ in ()).throw(FileNotFoundError(t)))
+    req = ScanRequest(ticker="MISSING", rule="price_above_ma", ma=20)
+    try:
+        es.run_scan(req)
+        assert False, "expected PrimaryNotFound"
+    except es.PrimaryNotFound:
+        pass
+
+
 def test_run_scan_progress_and_curves():
     es = _fixture()
     seen = []
-    req = ScanRequest(ticker="TSLA", rule="price_above_ma", ma=20, top_k=2)
+    req = ScanRequest(ticker="TSLA", rule="price_above_ma", ma=20, top_k=2, min_history=0)
     out = es.run_scan(req, progress_cb=lambda d, t: seen.append((d, t)))
     assert seen and seen[-1][0] == seen[-1][1]                   # final progress hits 100%
     cs = out["curves"]
@@ -145,6 +157,7 @@ if __name__ == "__main__":
         ("ScanRequest conversions", test_scan_request_conversions),
         ("run_scan excludes primary", test_run_scan_excludes_primary_and_loads_on_demand),
         ("run_scan primary missing", test_run_scan_primary_not_in_cache),
+        ("run_scan FileNotFound->PrimaryNotFound", test_run_scan_filenotfound_becomes_primary_not_found),
         ("run_scan progress/curves", test_run_scan_progress_and_curves),
         ("run_scan cancellation", test_run_scan_cancellation),
         ("dev fixture", test_dev_fixture_loads),
