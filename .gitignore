@@ -1,0 +1,7 @@
+# OHLC cache + generated plots (pulled from S3; reproducible)
+data/
+
+# Python
+__pycache__/
+*.pyc
+.env
