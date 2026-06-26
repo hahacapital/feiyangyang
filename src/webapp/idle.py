@@ -29,13 +29,16 @@ class IdleMonitor:
             self._last = self._now()
 
     def get_minutes(self) -> float | None:
-        return self._minutes
+        with self._lock:
+            return self._minutes
 
     def should_stop(self, now: float | None = None) -> bool:
-        if self._minutes is None:
+        with self._lock:
+            minutes, last = self._minutes, self._last
+        if minutes is None:
             return False
         now = self._now() if now is None else now
-        return (now - self._last) >= self._minutes * 60.0
+        return (now - last) >= minutes * 60.0
 
     def maybe_stop(self) -> bool:
         if not self.should_stop():
