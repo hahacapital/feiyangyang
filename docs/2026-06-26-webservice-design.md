@@ -1,7 +1,7 @@
 # feiyangyang Web Service — Design Spec
 
 **Date:** 2026-06-26
-**Status:** Approved direction; pending spec review
+**Status:** Approved; deployment decisions locked (§11); implementation plan next
 **Topic:** Wrap the existing `rebound.py` backup-finder engine in a personal web service
 (input a ticker, pick a strategy, set params, run → ranked backups + an interactive equity curve),
 deployed to AWS ECS Fargate.
@@ -150,6 +150,7 @@ interval covers the Python glue). SSE and concurrent requests stay responsive. N
 | `POST` | `/api/scan` | Validate body → create job → `{job_id, server_epoch}`; kicks off background scan. |
 | `GET` | `/api/scan/{id}/events` | **SSE** (`sse-starlette` `EventSourceResponse`): `progress` events `{done,total}`, terminal `result` event, `error` event. Heartbeat ping (default 15 s); `id:`/Last-Event-ID for reconnect. |
 | `GET` | `/api/scan/{id}/result` | Poll fallback for the full result payload; **410 + `{status:"unknown_job", server_epoch}`** for unknown/expired ids (so a post-restart UI re-runs instead of hanging). |
+| `GET`/`POST` | `/api/idle-policy` | Read/set the idle auto-stop window in minutes (default off). Enabling it lets the idle timer call `ecs:UpdateService desiredCount=0` (§10.6). |
 | `GET` | `/`, `/static/*` | SPA via `StaticFiles(directory=..., html=True)` mounted **after** all `/api` routes. |
 
 ### 5.4 Request / response schemas (pydantic)
@@ -344,14 +345,20 @@ the build (ARM64 or X86_64). Keep **default 20 GiB ephemeral storage** (cache <1
   `s3:GetObject` on `arn:aws:s3:::staking-ledger-bpt/jojo_quant/ohlc/*`;
   `s3:ListBucket` (+ optional `s3:GetBucketLocation`) on `arn:aws:s3:::staking-ledger-bpt` with
   `Condition StringLike s3:prefix = jojo_quant/ohlc/*`; add `Condition aws:ResourceAccount =
-  <account-id>` to block bucket-takeover. **App S3 access goes only on the task role.**
+  <account-id>` to block bucket-takeover. **App S3 access goes only on the task role.** For the idle
+  auto-stop toggle (§10.6) the task role also needs `ecs:UpdateService` + `ecs:DescribeServices`
+  scoped to this service's ARN only.
 
 ### 10.4 Slow-warmup survival & restart observability
-- ALB target-group / container health check points at **`/healthz`** (cheap liveness), *not*
-  `/api/status` (which is 503 while warming). If behind an ALB, set service
+- The service is fronted by the **existing ALB for `ff.theblueprint.xyz`**. The ALB target-group
+  health check (and the container health check) point at **`/healthz`** (cheap liveness), *not*
+  `/api/status` (which is 503 while warming), so the LB keeps a slow-warming task alive. Set service
   `healthCheckGracePeriodSeconds ≈ 600`. `startTimeout`/`stopTimeout` max out at 120 s and won't
   cover warmup — use `startPeriod` + grace period instead. Set `stopTimeout` generously so in-flight
-  scans/SSE drain on SIGTERM (uvicorn graceful shutdown via exec-form CMD).
+  scans/SSE drain on SIGTERM (uvicorn graceful shutdown via exec-form CMD). The ECS service
+  registers tasks into the target group via `loadBalancers` (`containerName`/`containerPort 8080`);
+  the host-based listener rule for `ff.theblueprint.xyz` routes to that target group (HTTPS via the
+  domain's ACM cert).
 - **`server_epoch`** (boot id) is returned in `/api/status` and every `job_id`. On a task
   replacement (deploy, OOM, AZ event) in-memory jobs are lost and a fresh warmup runs; unknown ids
   return **410** so the UI shows "Service restarted — please re-run" instead of hanging. Single task:
@@ -359,32 +366,42 @@ the build (ARM64 or X86_64). Keep **default 20 GiB ephemeral storage** (cache <1
 
 ### 10.5 deploy.sh & required inputs
 `deploy.sh`: `docker build` → ECR login + push → `register-task-definition` → `update-service` (or
-`run-task`). Parameterized via a `deploy/.env`; **inputs the user must supply:** AWS account id,
-ECR repo URI, region (`ap-northeast-1`), cluster (`ff`), subnet ids, security-group id, the two role
-ARNs, service name, `assignPublicIp` (public subnet) or NAT/VPC-endpoint choice for image pull.
-Unverifiable from docs and to confirm before deploy: cluster `ff` exists in ap-northeast-1, bucket
-name, account id.
+`create-service` first time). Parameterized via a `deploy/.env`; **inputs the user must supply:**
+AWS account id, ECR repo URI, region (`ap-northeast-1`), cluster (`ff`), subnet ids,
+security-group id (must allow the ALB's SG inbound on 8080), the two role ARNs, service name; and
+for ingress — the **ALB target-group ARN for `ff.theblueprint.xyz`** (or the ALB listener ARN if we
+add the host rule + a new target group), and the ACM cert / HTTPS listener already terminating the
+domain. Image pull: private subnet + NAT or ECR/S3/logs VPC endpoints (the ALB faces the internet,
+tasks need not be public). Unverifiable from docs and to confirm before deploy: cluster `ff` and the
+`ff.theblueprint.xyz` ALB/listener/target-group exist in ap-northeast-1, bucket name, account id.
 
-### 10.6 Cost (open decision — §11)
-24/7 **2 vCPU / 8 GB ≈ ~$85/mo** in Tokyo, **+ ~$16–20/mo if fronted by an ALB**. For a bursty
-personal tool this is the biggest waste. Options, cheapest first:
-1. **Scale-to-zero / start-on-demand** (`desiredCount 0→1` via a wake action) + **idle auto-stop**
-   (app calls `UpdateService 0` after N idle minutes) — ~90–95 % cheaper; pay one 1–3 min cold start
-   per session. Pairs naturally with the ephemeral-jobs design.
-2. **No ALB** — single task with a public IP (`assignPublicIp:ENABLED`), hit directly; saves the ALB
-   cost (public IP changes on restart — fine for personal use).
-3. **Fargate Spot** (~70 % off) — tolerable since jobs are ephemeral anyway.
-**v1 default proposed:** no ALB + always-on `desiredCount=1` (matches the "keep warm" choice); document
-scale-to-zero + idle-stop as the recommended cost mode. Final call deferred to the user (§11).
+### 10.6 Cost (decided — §11)
+24/7 **2 vCPU / 8 GB ≈ ~$85/mo** in Tokyo + the existing ALB. **Decision: always-on
+`desiredCount=1`** (matches the "keep warm" choice) — and additionally **ship an idle auto-stop
+toggle** (default **off**): an in-app idle timer (resets on each `/api/*` request) that, once
+enabled via `POST /api/idle-policy {minutes}`, calls `ecs:UpdateService desiredCount=0` after N idle
+minutes, dropping to ~$5–10/mo at the cost of a 1–3 min cold start next session.
 
-## 11. Open decisions for the user
+**Honest limitation — the app can stop itself but cannot wake itself.** Once `desiredCount=0` there
+is no running task, so the ALB returns 503 (no healthy targets) and the SPA can't be served. Waking
+is therefore out-of-band: ship `deploy/wake.sh` (`aws ecs update-service --desired-count 1`) and
+document an optional one-click path (a tiny always-on Lambda behind a dedicated ALB listener
+rule/path that flips desired to 1). The idle timer only ever performs the **stop** (it is up when it
+fires). `server_epoch` (§10.4) makes the subsequent cold restart observable so the UI re-runs
+cleanly. Fargate Spot (~70 % off) remains an available knob since jobs are ephemeral, not enabled by
+default.
 
-1. **Cost mode:** always-on `desiredCount=1` (warm, ~$85/mo) **vs** scale-to-zero + idle auto-stop
-   (cold start per session, ~$5–10/mo)? *(proposed: start always-on, ship the idle-stop toggle.)*
-2. **Ingress:** no ALB (direct public IP, cheap, IP changes on restart) **vs** ALB (stable DNS/TLS,
-   +~$18/mo)? *(proposed: no ALB for v1.)*
-3. **Task size:** 2 vCPU / 8 GB baseline OK, or pay for 4 vCPU / 16 GB to halve full-market scan
-   wall-clock? *(proposed: 2 vCPU / 8 GB; revisit if 30 s scans feel slow.)*
+This requires the **task role** to also hold `ecs:UpdateService` + `ecs:DescribeServices` scoped to
+this one service ARN (§10.3) and `POST /api/idle-policy` / `GET /api/idle-policy` endpoints (§5.3).
+
+## 11. Deployment decisions (resolved)
+
+1. **Cost mode → always-on `desiredCount=1`, plus an idle auto-stop toggle** the user can flip on to
+   reach scale-to-zero economics (§10.6).
+2. **Ingress → the existing ALB for `ff.theblueprint.xyz`** (stable DNS/TLS); the ECS service
+   registers into its target group, health check on `/healthz`, grace period ≈600 s (§10.4).
+3. **Task size → 2 vCPU / 8 GB** (`cpu=2048, memory=8192`); revisit 4 vCPU / 16 GB only if 30 s
+   full-market scans feel slow (§10.2).
 
 ## 12. What the research changed (vs first draft)
 
