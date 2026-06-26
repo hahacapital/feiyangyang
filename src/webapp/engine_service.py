@@ -1,0 +1,119 @@
+"""Warm in-memory frame store + scan orchestration over the rebound engine.
+
+Replicates scan()'s contract WITHOUT its per-request disk re-read: the candidate
+pool is the warm store minus the requested primary, and the primary is loaded on
+demand (it may be <756 bars or a '=' futures ticker not in the warm universe)."""
+from __future__ import annotations
+
+import os
+import sys
+
+import pandas as pd
+
+# Resolve sibling engine modules (src/ is the import root; be defensive).
+_SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
+
+import data_loader as _dl  # noqa: E402
+from rebound import (  # noqa: E402
+    antifragile_score, baseline_metrics, curve_series, daily_returns,
+    evaluate_iter, primary_held, rank_candidates,
+)
+
+WARM: dict[str, pd.DataFrame] = {}
+_load_primary = _dl.load_ohlc          # overridable in tests / dev
+_PROGRESS_EVERY = 50                    # batch SSE progress every N candidates
+
+
+class PrimaryNotFound(Exception):
+    """The requested primary ticker is not in the OHLC cache."""
+
+
+class ScanCancelled(Exception):
+    """The scan was cancelled via its cancel_event."""
+
+
+def warm_load(frames: dict) -> None:
+    WARM.clear()
+    WARM.update(frames)
+
+
+def universe() -> list[str]:
+    return sorted(WARM.keys())
+
+
+def warm_count() -> int:
+    return len(WARM)
+
+
+def set_primary_loader(fn) -> None:
+    global _load_primary
+    _load_primary = fn
+
+
+def run_scan(req, *, progress_cb=None, cancel_event=None) -> dict:
+    try:
+        primary_df = _load_primary(req.ticker)
+    except FileNotFoundError as exc:
+        raise PrimaryNotFound(req.ticker) from exc
+
+    held = primary_held(primary_df, req.rule, **req.params())
+    primary_ret = daily_returns(primary_df)
+    candidate_frames = {t: f for t, f in WARM.items() if t != req.ticker}
+    total = len(candidate_frames)
+
+    rows = []
+    for i, (_ticker, row) in enumerate(evaluate_iter(
+            primary_df, held, primary_ret, candidate_frames,
+            cost_bps=req.cost_bps, health_ma=50, min_overlap=252), start=1):
+        if cancel_event is not None and cancel_event.is_set():
+            raise ScanCancelled()
+        if row is not None:
+            rows.append(row)
+        if progress_cb and (i % _PROGRESS_EVERY == 0 or i == total):
+            progress_cb(i, total)
+    if progress_cb and total == 0:
+        progress_cb(0, 0)
+
+    baselines = baseline_metrics(held, primary_ret)
+    ranked = rank_candidates(rows, sort_key=req.sort, max_dd_cap=req.max_dd_cap(),
+                             top=req.top, min_history_bars=req.min_history_bars())
+    ranked_out = [{**r, "afscore": antifragile_score(r)} for r in ranked]
+
+    as_of = str(held.index[-1])[:10]
+    state = "in-market" if bool(held.iloc[-1]) else "flat"
+    curves = curve_series(primary_df, held, primary_ret, ranked, candidate_frames,
+                          mode=req.mode, top_k=req.top_k)
+    return {
+        "as_of": as_of,
+        "recommendation": {"state": state,
+                           "top": ranked_out[0]["ticker"] if ranked_out else None},
+        "baselines": baselines,
+        "ranked": ranked_out,
+        "curves": curves,
+    }
+
+
+def load_dev_fixture() -> None:
+    """Deterministic synthetic universe + primary for offline dev / smoke tests.
+
+    No S3, no disk. Primary 'DEMO' plus a handful of candidates with distinct
+    shapes so the chart, ribbon, and table all have content."""
+    import numpy as np
+
+    def synth(seed, n=1500, drift=0.0003, vol=0.012, start="2018-01-01"):
+        rng = np.random.default_rng(seed)
+        rets = rng.normal(drift, vol, n)
+        close = 100.0 * np.cumprod(1.0 + rets)
+        idx = pd.bdate_range(start, periods=n)
+        return pd.DataFrame({"open": close, "high": close, "low": close,
+                             "close": close}, index=idx)
+
+    demo = synth(1, drift=0.0006)
+    frames = {"SPY": synth(2, drift=0.0004), "GLD": synth(3, drift=0.0001, vol=0.009),
+              "TLT": synth(4, drift=0.00005, vol=0.008), "QQQ": synth(5, drift=0.0007)}
+    warm_load(frames)
+    set_primary_loader(lambda t: demo if t.upper() == "DEMO"
+                       else WARM.get(t.upper()) if t.upper() in WARM
+                       else (_ for _ in ()).throw(PrimaryNotFound(t)))
