@@ -117,7 +117,7 @@ job registry must live in one process.
 
 `GET /healthz` · `GET /api/status` · `GET /api/universe` · `POST /api/scan` →
 `{job_id}` · `GET /api/scan/{id}/events` (SSE progress + result) ·
-`GET /api/scan/{id}/result` (poll) · `GET|POST /api/idle-policy`.
+`GET /api/scan/{id}/result` (poll) · `GET|POST /api/idle-policy` · static SPA at `/`.
 
 ### Tests
 
@@ -139,10 +139,11 @@ auto-stop toggle drops it to `desiredCount=0` to save cost (wake via
 ## Tests
 
 ```bash
-python3 src/test_rebound.py   # 18 assert-based cases, incl. an explicit no-look-ahead test
+python3 src/test_rebound.py   # engine: 22 assert-based cases, incl. an explicit no-look-ahead test
+python3 src/test_webapp.py    # web layer: 22 cases (needs Python >=3.10 + requirements-dev.txt; see Web service > Tests)
 ```
 
-Tests use synthetic in-memory data and need no cache.
+Tests use synthetic in-memory data and need no cache (the web-layer suite needs the deps installed).
 
 ## Layout
 
