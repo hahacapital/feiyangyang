@@ -185,6 +185,57 @@ def test_jobs_error_surfaces():
     assert job.status == "error" and "NOPE" in (job.error or "")
 
 
+def _client(dev_fixture=True):
+    import os
+    os.environ["FEIYANG_SKIP_WARMUP"] = "1"
+    if dev_fixture:
+        import webapp.engine_service as es
+        es.load_dev_fixture()
+    from fastapi.testclient import TestClient
+    from webapp.app import app, STATE
+    STATE["ready"] = True
+    return TestClient(app)
+
+
+def test_http_status_and_universe():
+    with _client() as c:
+        assert c.get("/healthz").status_code == 200
+        s = c.get("/api/status").json()
+        assert s["state"] == "ready" and "server_epoch" in s
+        u = c.get("/api/universe").json()
+        assert "SPY" in u["tickers"]
+
+
+def test_http_scan_validation_422():
+    with _client() as c:
+        r = c.post("/api/scan", json={"ticker": "DEMO", "rule": "ma_cross",
+                                      "fast": 30, "slow": 5})
+        assert r.status_code == 422
+
+
+def test_http_scan_poll_result():
+    import time
+    with _client() as c:
+        r = c.post("/api/scan", json={"ticker": "DEMO", "rule": "ma_cross",
+                                      "fast": 5, "slow": 20, "top_k": 2})
+        assert r.status_code == 200
+        jid = r.json()["job_id"]
+        out = None
+        for _ in range(200):
+            rr = c.get(f"/api/scan/{jid}/result")
+            if rr.status_code == 200 and rr.json().get("status") == "done":
+                out = rr.json()["result"]; break
+            time.sleep(0.02)
+        assert out and out["curves"]["dates"]
+
+
+def test_http_unknown_job_410():
+    with _client() as c:
+        r = c.get("/api/scan/ZZZ-deadbeef/result")
+        assert r.status_code == 410
+        assert r.json()["status"] == "unknown_job"
+
+
 if __name__ == "__main__":
     tests = [
         ("ScanRequest ma_cross", test_scan_request_ma_cross_ok),
@@ -201,6 +252,10 @@ if __name__ == "__main__":
         ("jobs lifecycle", test_jobs_lifecycle),
         ("jobs unknown/epoch", test_jobs_unknown_and_epoch),
         ("jobs error surfaces", test_jobs_error_surfaces),
+        ("http status/universe", test_http_status_and_universe),
+        ("http scan 422", test_http_scan_validation_422),
+        ("http scan poll result", test_http_scan_poll_result),
+        ("http unknown job 410", test_http_unknown_job_410),
     ]
     passed = failed = 0
     for name, fn in tests:
