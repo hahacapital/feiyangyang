@@ -270,6 +270,35 @@ def test_sync_cache_with_fake_client(tmp="/tmp/feiyang_synctest"):
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_idle_monitor_logic():
+    from webapp.idle import IdleMonitor
+    clock = {"t": 1000.0}
+
+    class FakeEcs:
+        def __init__(self): self.calls = []
+        def update_service(self, **kw): self.calls.append(kw)
+
+    ecs = FakeEcs()
+    m = IdleMonitor(ecs, "ff", "feiyang", now=lambda: clock["t"])
+    assert m.should_stop() is False                 # disabled by default
+    m.set_minutes(5)
+    m.touch()
+    clock["t"] += 4 * 60
+    assert m.should_stop() is False                 # 4 < 5 min idle
+    clock["t"] += 2 * 60
+    assert m.should_stop() is True                  # 6 >= 5 min idle
+    assert m.maybe_stop() is True
+    assert ecs.calls[0]["desiredCount"] == 0
+    assert ecs.calls[0]["cluster"] == "ff" and ecs.calls[0]["service"] == "feiyang"
+
+
+def test_idle_policy_endpoints():
+    with _client() as c:
+        assert c.get("/api/idle-policy").json()["minutes"] is None
+        c.post("/api/idle-policy", json={"minutes": 30})
+        assert c.get("/api/idle-policy").json()["minutes"] == 30
+
+
 if __name__ == "__main__":
     tests = [
         ("ScanRequest ma_cross", test_scan_request_ma_cross_ok),
@@ -292,6 +321,8 @@ if __name__ == "__main__":
         ("http unknown job 410", test_http_unknown_job_410),
         ("cache local_path_for", test_local_path_for),
         ("cache sync fake client", test_sync_cache_with_fake_client),
+        ("idle monitor logic", test_idle_monitor_logic),
+        ("idle policy endpoints", test_idle_policy_endpoints),
     ]
     passed = failed = 0
     for name, fn in tests:

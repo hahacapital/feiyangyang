@@ -10,13 +10,16 @@ import json
 import os
 import sys
 import threading
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 from starlette.middleware.gzip import GZipMiddleware
 
@@ -34,6 +37,14 @@ STATE = {
     "cache_date": None,
     "server_epoch": uuid.uuid4().hex[:8],
 }
+
+
+class IdlePolicy(BaseModel):
+    minutes: Optional[float] = None
+
+
+_MONITOR = {"obj": None}  # set in lifespan (prod) or lazily for tests
+_IDLE_FALLBACK = {"minutes": None}
 
 
 def _warmup_prod() -> None:
@@ -68,6 +79,21 @@ async def lifespan(app: FastAPI):
         pass  # tests inject WARM and set STATE["ready"]
     else:
         threading.Thread(target=_warmup_prod, name="warmup", daemon=True).start()
+        import boto3
+        from webapp.idle import IdleMonitor
+        cluster = os.environ.get("ECS_CLUSTER", "ff")
+        service = os.environ.get("ECS_SERVICE", "feiyangyang")
+        _MONITOR["obj"] = IdleMonitor(boto3.client("ecs"), cluster, service)
+
+        def _idle_loop():
+            while True:
+                time.sleep(60)
+                try:
+                    if _MONITOR["obj"] and _MONITOR["obj"].maybe_stop():
+                        return
+                except Exception:
+                    pass
+        threading.Thread(target=_idle_loop, name="idle", daemon=True).start()
     yield
 
 
@@ -75,6 +101,13 @@ app = FastAPI(title="feiyangyang · STANDBY CONSOLE", lifespan=lifespan)
 # Compress JSON responses (the ~49 KB curve payload from /api/scan/{id}/result).
 # Tiny SSE progress events are below minimum_size, so the live stream is unaffected.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+@app.middleware("http")
+async def _touch_idle(request: Request, call_next):
+    if _MONITOR["obj"] is not None and request.url.path.startswith("/api/"):
+        _MONITOR["obj"].touch()
+    return await call_next(request)
 
 
 @app.get("/healthz")
@@ -136,6 +169,22 @@ async def scan_events(job_id: str):
                 return
             await asyncio.sleep(0.5)
     return EventSourceResponse(gen())
+
+
+@app.get("/api/idle-policy")
+def get_idle_policy() -> dict:
+    m = _MONITOR["obj"]
+    return {"minutes": m.get_minutes() if m else _IDLE_FALLBACK["minutes"]}
+
+
+@app.post("/api/idle-policy")
+def set_idle_policy(policy: IdlePolicy) -> dict:
+    m = _MONITOR["obj"]
+    if m:
+        m.set_minutes(policy.minutes)
+    else:
+        _IDLE_FALLBACK["minutes"] = policy.minutes  # no ECS client (dev/test)
+    return {"minutes": policy.minutes}
 
 
 # Static SPA — mounted LAST so /api/* wins. html=True serves index.html at "/".
