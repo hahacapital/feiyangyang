@@ -1546,11 +1546,14 @@ git commit -m "feat(webapp): opt-in idle auto-stop (ECS desiredCount=0) + policy
   --body:"Archivo",system-ui,sans-serif;
 }
 *{box-sizing:border-box}
-body{margin:0;background:
-   radial-gradient(120% 80% at 50% -10%,#19202b 0%,var(--ink) 60%);
-   color:var(--paper);font-family:var(--body);
-   /* faint phosphor scanline texture — the instrument-panel risk */
-   background-image:repeating-linear-gradient(0deg,rgba(255,255,255,.014) 0 1px,transparent 1px 3px);}
+body{margin:0;min-height:100vh;
+   background-color:var(--ink);
+   /* scanline texture (top) over the dark radial gradient over the ink base —
+      one multi-layer background-image so the gradient isn't overwritten */
+   background-image:
+     repeating-linear-gradient(0deg,rgba(255,255,255,.014) 0 1px,transparent 1px 3px),
+     radial-gradient(120% 80% at 50% -10%,#19202b 0%,var(--ink) 60%);
+   color:var(--paper);font-family:var(--body);}
 .topbar{display:flex;justify-content:space-between;align-items:center;
    padding:14px 22px;border-bottom:1px solid var(--edge)}
 .brand{font-family:var(--disp);font-size:18px;font-weight:700;letter-spacing:.04em;margin:0}
