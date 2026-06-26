@@ -6,4 +6,3 @@ fastapi==0.138.1
 uvicorn[standard]==0.49.0
 sse-starlette==3.4.5
 boto3
-httpx

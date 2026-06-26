@@ -44,13 +44,13 @@ def _warmup_prod() -> None:
         cache_sync.sync_cache()
         tickers = dl.list_universe(min_bars=756)
         frames = {}
+        STATE["total"] = len(tickers)
         for i, t in enumerate(tickers, 1):
             try:
                 frames[t] = dl.load_ohlc(t)
             except Exception:
                 continue
             STATE["loaded"] = i
-            STATE["total"] = len(tickers)
         engine_service.warm_load(frames)
         manifest = dl.read_manifest()
         STATE["cache_date"] = manifest.get("last_update")
