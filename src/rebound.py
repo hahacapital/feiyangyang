@@ -192,12 +192,15 @@ def evaluate_candidate(ticker: str, primary_df: pd.DataFrame, held: pd.Series,
     return row
 
 
-def evaluate_all(primary_df: pd.DataFrame, held: pd.Series,
-                 primary_ret: pd.Series, candidate_frames: dict, *,
-                 cost_bps: float = 0.0, health_ma: int = 50,
-                 min_overlap: int = 252) -> list:
-    """Evaluate every candidate frame; skip thin/erroring ones."""
-    rows = []
+def evaluate_iter(primary_df: pd.DataFrame, held: pd.Series,
+                  primary_ret: pd.Series, candidate_frames: dict, *,
+                  cost_bps: float = 0.0, health_ma: int = 50,
+                  min_overlap: int = 252):
+    """Yield (ticker, row_or_None) for every candidate frame, in dict order.
+
+    Same per-candidate logic as evaluate_all (errors/thin overlaps -> None), but
+    streamed so callers can report progress and check for cancellation.
+    """
     for ticker, cand_df in candidate_frames.items():
         try:
             row = evaluate_candidate(ticker, primary_df, held, primary_ret,
@@ -205,9 +208,17 @@ def evaluate_all(primary_df: pd.DataFrame, held: pd.Series,
                                      health_ma=health_ma, min_overlap=min_overlap)
         except Exception:
             row = None
-        if row is not None:
-            rows.append(row)
-    return rows
+        yield ticker, row
+
+
+def evaluate_all(primary_df: pd.DataFrame, held: pd.Series,
+                 primary_ret: pd.Series, candidate_frames: dict, *,
+                 cost_bps: float = 0.0, health_ma: int = 50,
+                 min_overlap: int = 252) -> list:
+    """Evaluate every candidate frame; skip thin/erroring ones."""
+    return [row for _, row in evaluate_iter(
+        primary_df, held, primary_ret, candidate_frames, cost_bps=cost_bps,
+        health_ma=health_ma, min_overlap=min_overlap) if row is not None]
 
 
 # ---------------------------------------------------------------------------
@@ -326,6 +337,61 @@ def current_recommendation(held: pd.Series, ranked: list) -> str:
     return f"[{date}] Current state: FLAT — park in top backup: {top}."
 
 
+def _regime_segments(active: pd.Series) -> list:
+    """Run-length-encode a per-day 'active' Series ('primary'/'candidate'/'cash')
+    into contiguous [start, end, state] segments that tile the index with no gaps."""
+    if len(active) == 0:
+        return []
+    grp = (active != active.shift()).cumsum()
+    segs = []
+    for _, block in active.groupby(grp, sort=False):
+        segs.append({"start": block.index[0].strftime("%Y-%m-%d"),
+                     "end": block.index[-1].strftime("%Y-%m-%d"),
+                     "state": str(block.iloc[0])})
+    return segs
+
+
+def curve_series(primary_df: pd.DataFrame, held: pd.Series,
+                 primary_ret: pd.Series, ranked: list, candidate_frames: dict, *,
+                 mode: str = "naked", top_k: int = 3) -> dict:
+    """JSON-able equivalent of plot_curves' series math (so the two cannot drift).
+
+    Uses plot_curves' SHARED top-k window (held.index ∩ each plotted candidate's
+    index), emits equity_curve verbatim with NO re-normalization (the rebased
+    first point is genuinely ~1.0, not forced to 1.0), and derives the rank-1
+    drawdown + regime segments from the FIRST pick only.
+    """
+    picks = ranked[:top_k]
+    common = held.index
+    for r in picks:
+        common = common.intersection(candidate_frames[r["ticker"]].index)
+
+    h = held.reindex(common).fillna(False).astype(bool)
+    pr = primary_ret.reindex(common).fillna(0.0)
+    dates = [d.strftime("%Y-%m-%d") for d in common]
+
+    out = {
+        "dates": dates,
+        "primary_buy_hold": equity_curve(pr).tolist(),
+        "primary_cash": equity_curve(pr.where(h, 0.0)).tolist(),
+        "picks": [],
+        "rank1_drawdown": [],
+        "regime": [],
+    }
+    for i, r in enumerate(picks):
+        t = r["ticker"]
+        cr = daily_returns(candidate_frames[t]).reindex(common).fillna(0.0)
+        ch = candidate_healthy(candidate_frames[t]).reindex(common).fillna(False).astype(bool)
+        s = stitch(h, pr, cr, mode=mode, cand_healthy=ch)
+        eq = equity_curve(s["ret"])
+        out["picks"].append({"ticker": t, "mode": mode, "equity": eq.tolist()})
+        if i == 0:
+            peak = eq.cummax()
+            out["rank1_drawdown"] = ((eq / peak - 1.0) * 100.0).tolist()
+            out["regime"] = _regime_segments(s["active"])
+    return out
+
+
 def plot_curves(primary_df: pd.DataFrame, held: pd.Series,
                 primary_ret: pd.Series, ranked: list, candidate_frames: dict, *,
                 mode: str = "naked", top_k: int = 3, out_path: str,
@@ -340,35 +406,17 @@ def plot_curves(primary_df: pd.DataFrame, held: pd.Series,
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    picks = ranked[:top_k]
-    # shared window = primary index ∩ every plotted candidate's index
-    common = held.index
-    for r in picks:
-        common = common.intersection(candidate_frames[r["ticker"]].index)
-
-    def rebased(ret: pd.Series) -> pd.Series:
-        return equity_curve(ret.reindex(common).fillna(0.0))
-
-    h = held.reindex(common).fillna(False).astype(bool)
-    pr = primary_ret.reindex(common).fillna(0.0)
+    cs = curve_series(primary_df, held, primary_ret, ranked, candidate_frames,
+                      mode=mode, top_k=top_k)
+    x = pd.to_datetime(cs["dates"])
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True,
                                    gridspec_kw={"height_ratios": [3, 1]})
 
-    ax1.plot(common, rebased(pr).values, label="Primary Buy&Hold",
-             color="black", lw=1.2)
-    ax1.plot(common, rebased(pr.where(h, 0.0)).values,
-             label="Primary + cash", color="grey", lw=1.0, ls="--")
-
-    rank1_dd_equity = None
-    for r in picks:
-        cr = daily_returns(candidate_frames[r["ticker"]]).reindex(common).fillna(0.0)
-        ch = candidate_healthy(candidate_frames[r["ticker"]]).reindex(common).fillna(False).astype(bool)
-        s = stitch(h, pr, cr, mode=mode, cand_healthy=ch)
-        eq = equity_curve(s["ret"])
-        ax1.plot(common, eq.values, lw=1.1, label=f"+ {r['ticker']} ({mode})")
-        if rank1_dd_equity is None:
-            rank1_dd_equity = eq
+    ax1.plot(x, cs["primary_buy_hold"], label="Primary Buy&Hold", color="black", lw=1.2)
+    ax1.plot(x, cs["primary_cash"], label="Primary + cash", color="grey", lw=1.0, ls="--")
+    for p in cs["picks"]:
+        ax1.plot(x, p["equity"], lw=1.1, label=f"+ {p['ticker']} ({p['mode']})")
 
     ax1.set_yscale("log")
     ax1.set_ylabel("Equity (log, rebased=1.0)")
@@ -376,10 +424,8 @@ def plot_curves(primary_df: pd.DataFrame, held: pd.Series,
     ax1.legend(loc="upper left", fontsize=8)
     ax1.grid(True, which="both", alpha=0.3)
 
-    if rank1_dd_equity is not None:
-        peak = rank1_dd_equity.cummax()
-        dd = (rank1_dd_equity / peak - 1.0) * 100
-        ax2.fill_between(common, dd.values, 0, color="red", alpha=0.3)
+    if cs["rank1_drawdown"]:
+        ax2.fill_between(x, cs["rank1_drawdown"], 0, color="red", alpha=0.3)
         ax2.set_ylabel("Rank-1 DD %")
     ax2.grid(True, alpha=0.3)
 

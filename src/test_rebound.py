@@ -357,6 +357,66 @@ def test_build_parser():
     assert d.max_dd is None and d.min_history == 5.0
 
 
+def test_evaluate_iter_matches_evaluate_all():
+    from rebound import primary_held, daily_returns, evaluate_iter, evaluate_all
+    primary = make_df(list(range(1, 31)))
+    held = primary_held(primary, "price_above_ma", ma=3)
+    p_ret = daily_returns(primary)
+    frames = {"A": make_df([100 + i for i in range(30)]),
+              "B": make_df([200 - i for i in range(30)]),
+              "SHORT": make_df([1, 2, 3])}
+    pairs = list(evaluate_iter(primary, held, p_ret, frames, min_overlap=5))
+    assert [t for t, _ in pairs] == ["A", "B", "SHORT"]       # yields every ticker, in order
+    assert dict(pairs)["SHORT"] is None                        # thin -> None (not dropped)
+    rows = [r for _, r in pairs if r is not None]
+    assert {r["ticker"] for r in rows} == {r["ticker"] for r in
+            evaluate_all(primary, held, p_ret, frames, min_overlap=5)}
+
+
+def test_curve_series_shape_and_window():
+    from rebound import primary_held, daily_returns, curve_series
+    primary = make_df(list(range(1, 61)))                      # 60 bars from 2020-01-01
+    frames = {"A": make_df([100 + i for i in range(60)]),
+              "B": make_df([100 + 2 * i for i in range(40)], start="2020-02-01")}  # shorter, later
+    held = primary_held(primary, "price_above_ma", ma=3)
+    p_ret = daily_returns(primary)
+    ranked = [{"ticker": "A"}, {"ticker": "B"}]
+    cs = curve_series(primary, held, p_ret, ranked, frames, mode="naked", top_k=2)
+    common = held.index.intersection(frames["A"].index).intersection(frames["B"].index)
+    assert len(cs["dates"]) == len(common)                     # shared top-k window
+    assert len(cs["primary_buy_hold"]) == len(cs["dates"])
+    assert len(cs["primary_cash"]) == len(cs["dates"])
+    assert [p["ticker"] for p in cs["picks"]] == ["A", "B"]
+    assert all(len(p["equity"]) == len(cs["dates"]) for p in cs["picks"])
+    assert len(cs["rank1_drawdown"]) == len(cs["dates"])
+
+
+def test_curve_series_no_renormalization():
+    from rebound import primary_held, daily_returns, curve_series
+    # candidate starts a month later, so the shared window's first bar is mid-primary
+    # where the primary's return is nonzero -> rebased first point is NOT 1.0.
+    primary = make_df(list(range(1, 61)))
+    frames = {"A": make_df([100 + i for i in range(40)], start="2020-02-01")}
+    held = primary_held(primary, "price_above_ma", ma=3)
+    p_ret = daily_returns(primary)
+    cs = curve_series(primary, held, p_ret, [{"ticker": "A"}], frames, top_k=1)
+    assert abs(cs["primary_buy_hold"][0] - 1.0) > 1e-9, "first point must not be forced to 1.0"
+    assert all(d <= 1e-9 for d in cs["rank1_drawdown"]), "drawdown is <= 0 (percent)"
+
+
+def test_curve_series_regime_tiles_window():
+    from rebound import primary_held, daily_returns, curve_series
+    primary = make_df([10, 9, 8, 7, 6, 5, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24])
+    frames = {"A": make_df([50 + i for i in range(16)])}
+    held = primary_held(primary, "ma_cross", fast=2, slow=4)
+    p_ret = daily_returns(primary)
+    cs = curve_series(primary, held, p_ret, [{"ticker": "A"}], frames, mode="naked", top_k=1)
+    seg = cs["regime"]
+    assert seg, "expected at least one regime segment"
+    assert all(s["state"] in {"primary", "candidate", "cash"} for s in seg)
+    assert seg[0]["start"] == cs["dates"][0] and seg[-1]["end"] == cs["dates"][-1]  # tiles fully
+
+
 if __name__ == "__main__":
     tests = [
         ("primary_held price_above_ma", test_primary_held_price_above_ma),
@@ -377,6 +437,10 @@ if __name__ == "__main__":
         ("plot_curves", test_plot_curves),
         ("no look-ahead (future invariance)", test_no_lookahead_future_invariance),
         ("arg parser", test_build_parser),
+        ("evaluate_iter", test_evaluate_iter_matches_evaluate_all),
+        ("curve_series shape/window", test_curve_series_shape_and_window),
+        ("curve_series no-renorm", test_curve_series_no_renormalization),
+        ("curve_series regime tiles", test_curve_series_regime_tiles_window),
     ]
     passed = failed = 0
     for name, fn in tests:
