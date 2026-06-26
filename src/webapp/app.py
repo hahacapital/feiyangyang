@@ -36,6 +36,7 @@ STATE = {
     "total": 0,
     "cache_date": None,
     "server_epoch": uuid.uuid4().hex[:8],
+    "warmup_error": None,
 }
 
 
@@ -65,6 +66,8 @@ def _warmup_prod() -> None:
         engine_service.warm_load(frames)
         manifest = dl.read_manifest()
         STATE["cache_date"] = manifest.get("last_update")
+    except Exception as exc:               # noqa: BLE001 - surface warmup failure
+        STATE["warmup_error"] = str(exc)
     finally:
         STATE["ready"] = True
 
@@ -99,7 +102,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="feiyangyang · STANDBY CONSOLE", lifespan=lifespan)
 # Compress JSON responses (the ~49 KB curve payload from /api/scan/{id}/result).
-# Tiny SSE progress events are below minimum_size, so the live stream is unaffected.
+# Starlette's GZipMiddleware excludes text/event-stream by content-type, so the
+# SSE progress stream is never buffered/compressed.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
@@ -119,7 +123,8 @@ def healthz() -> Response:
 def status() -> dict:
     return {"state": "ready" if STATE["ready"] else "warming",
             "loaded": STATE["loaded"], "total": STATE["total"],
-            "cache_date": STATE["cache_date"], "server_epoch": STATE["server_epoch"]}
+            "cache_date": STATE["cache_date"], "server_epoch": STATE["server_epoch"],
+            "warmup_error": STATE["warmup_error"]}
 
 
 @app.get("/api/universe")
@@ -155,19 +160,26 @@ async def scan_events(job_id: str):
                 {"status": "unknown_job", "server_epoch": STATE["server_epoch"]})}
             return
         last = -1
-        while True:
-            if job.done != last:
-                last = job.done
-                yield {"event": "progress",
-                       "data": json.dumps({"done": job.done, "total": job.total})}
-            if job.status in {"done", "error", "cancelled"}:
-                # Signal completion only; the SPA fetches the (gzip-eligible) full
-                # result from GET /api/scan/{id}/result so the ~49 KB curve payload
-                # is compressed and the SSE stream stays small.
-                yield {"event": "result",
-                       "data": json.dumps({"status": job.status, "error": job.error})}
-                return
-            await asyncio.sleep(0.5)
+        completed = False
+        try:
+            while True:
+                if job.done != last:
+                    last = job.done
+                    yield {"event": "progress",
+                           "data": json.dumps({"done": job.done, "total": job.total})}
+                if job.status in {"done", "error", "cancelled"}:
+                    # Completion signal only; the SPA fetches the full result from
+                    # GET /api/scan/{id}/result (gzip-eligible) so the SSE stream stays small.
+                    yield {"event": "result",
+                           "data": json.dumps({"status": job.status, "error": job.error})}
+                    completed = True
+                    return
+                await asyncio.sleep(0.5)
+        finally:
+            # Client disconnected before completion -> stop the abandoned scan so it
+            # doesn't hold the single-thread executor and block the next scan.
+            if not completed and job.status in {"queued", "running"}:
+                jobs.cancel(job_id)
     return EventSourceResponse(gen())
 
 
