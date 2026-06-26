@@ -236,6 +236,40 @@ def test_http_unknown_job_410():
         assert r.json()["status"] == "unknown_job"
 
 
+def test_local_path_for():
+    from webapp.cache_sync import local_path_for
+    p = local_path_for("jojo_quant/ohlc/", "jojo_quant/ohlc/stocks/AAPL.parquet", "/tmp/ohlc")
+    assert p == "/tmp/ohlc/stocks/AAPL.parquet"
+
+
+def test_sync_cache_with_fake_client(tmp="/tmp/feiyang_synctest"):
+    import os, shutil
+    shutil.rmtree(tmp, ignore_errors=True)
+    from webapp import cache_sync
+
+    class FakeClient:
+        def get_paginator(self, _name):
+            class P:
+                def paginate(self, **_kw):
+                    yield {"Contents": [
+                        {"Key": "jojo_quant/ohlc/stocks/AAPL.parquet", "Size": 3},
+                        {"Key": "jojo_quant/ohlc/_meta.parquet", "Size": 5},
+                        {"Key": "jojo_quant/ohlc/", "Size": 0},          # the prefix "folder" -> skipped
+                    ]}
+            return P()
+
+        def download_file(self, Bucket, Key, Filename):
+            os.makedirs(os.path.dirname(Filename), exist_ok=True)
+            with open(Filename, "w") as f:
+                f.write("x")
+
+    n = cache_sync.sync_cache(dest_dir=tmp, client=FakeClient())
+    assert n == 2
+    assert os.path.exists(f"{tmp}/stocks/AAPL.parquet")
+    assert os.path.exists(f"{tmp}/_meta.parquet")
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     tests = [
         ("ScanRequest ma_cross", test_scan_request_ma_cross_ok),
@@ -256,6 +290,8 @@ if __name__ == "__main__":
         ("http scan 422", test_http_scan_validation_422),
         ("http scan poll result", test_http_scan_poll_result),
         ("http unknown job 410", test_http_unknown_job_410),
+        ("cache local_path_for", test_local_path_for),
+        ("cache sync fake client", test_sync_cache_with_fake_client),
     ]
     passed = failed = 0
     for name, fn in tests:
