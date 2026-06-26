@@ -148,6 +148,43 @@ def test_dev_fixture_loads():
     assert out["curves"]["dates"]
 
 
+def test_jobs_lifecycle():
+    import time
+    import webapp.engine_service as es
+    import webapp.jobs as jobs
+    _fixture()
+    jid = jobs.submit(ScanRequest(ticker="TSLA", rule="price_above_ma", ma=20, top_k=2), "ep1")
+    assert jid.startswith("ep1-")
+    for _ in range(200):
+        if jobs.get(jid).status in {"done", "error"}:
+            break
+        time.sleep(0.02)
+    job = jobs.get(jid)
+    assert job.status == "done", f"got {job.status}: {job.error}"
+    assert job.total >= 1 and job.done == job.total
+    assert job.result["curves"]["dates"]
+
+
+def test_jobs_unknown_and_epoch():
+    import webapp.jobs as jobs
+    assert jobs.get("nope") is None
+    assert jobs.belongs_to_epoch("ep1-abcd1234", "ep1") is True
+    assert jobs.belongs_to_epoch("ep1-abcd1234", "ep2") is False
+
+
+def test_jobs_error_surfaces():
+    import time
+    import webapp.jobs as jobs
+    _fixture()
+    jid = jobs.submit(ScanRequest(ticker="NOPE", rule="price_above_ma", ma=20), "ep1")
+    for _ in range(200):
+        if jobs.get(jid).status in {"done", "error"}:
+            break
+        time.sleep(0.02)
+    job = jobs.get(jid)
+    assert job.status == "error" and "NOPE" in (job.error or "")
+
+
 if __name__ == "__main__":
     tests = [
         ("ScanRequest ma_cross", test_scan_request_ma_cross_ok),
@@ -161,6 +198,9 @@ if __name__ == "__main__":
         ("run_scan progress/curves", test_run_scan_progress_and_curves),
         ("run_scan cancellation", test_run_scan_cancellation),
         ("dev fixture", test_dev_fixture_loads),
+        ("jobs lifecycle", test_jobs_lifecycle),
+        ("jobs unknown/epoch", test_jobs_unknown_and_epoch),
+        ("jobs error surfaces", test_jobs_error_surfaces),
     ]
     passed = failed = 0
     for name, fn in tests:
