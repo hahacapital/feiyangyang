@@ -114,6 +114,20 @@ async def _touch_idle(request: Request, call_next):
     return await call_next(request)
 
 
+# SPA assets change on every deploy; without this browsers serve a stale cached
+# index.html/app.js/styles.css. no-cache forces revalidation (ETag -> 304 when
+# unchanged, so it stays cheap) instead of blind caching.
+_NO_CACHE_PATHS = {"/", "/index.html", "/app.js", "/styles.css"}
+
+
+@app.middleware("http")
+async def _spa_no_cache(request: Request, call_next):
+    resp = await call_next(request)
+    if request.url.path in _NO_CACHE_PATHS:
+        resp.headers["Cache-Control"] = "no-cache"
+    return resp
+
+
 @app.get("/healthz")
 def healthz() -> Response:
     return Response(content="ok", media_type="text/plain")
