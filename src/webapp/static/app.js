@@ -159,10 +159,17 @@ function markSelected(ticker) {
 // Click a backup row -> fetch its combined equity curve and redraw the chart.
 async function selectBackup(ticker) {
   markSelected(ticker);
+  let res;
   try {
-    const j = await (await fetch(`/api/scan/${G.jobId}/curve?ticker=${encodeURIComponent(ticker)}`)).json();
-    if (j && j.curves) renderChart(j.curves, ticker);
-  } catch { /* keep the current chart on a transient error */ }
+    res = await fetch(`/api/scan/${G.jobId}/curve?ticker=${encodeURIComponent(ticker)}`);
+  } catch { return; }                    // transient network: keep the current chart
+  if (res.status === 410) {              // job gone (service restarted/redeployed)
+    setPlate("idle", "服务已更新，请重新扫描。");
+    return;
+  }
+  if (!res.ok) return;
+  const j = await res.json();
+  if (j && j.curves) renderChart(j.curves, ticker);
 }
 
 // ---- 3-panel chart: one hero backup (equity, log) / regime ribbon / drawdown ----
