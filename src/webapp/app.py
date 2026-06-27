@@ -64,6 +64,7 @@ def _warmup_prod() -> None:
                 continue
             STATE["loaded"] = i
         engine_service.warm_load(frames)
+        engine_service.load_etf_set()       # best-effort; for the exclude-ETF filter
         manifest = dl.read_manifest()
         STATE["cache_date"] = manifest.get("last_update")
     except Exception as exc:               # noqa: BLE001 - surface warmup failure

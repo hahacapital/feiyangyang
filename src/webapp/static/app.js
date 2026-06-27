@@ -37,7 +37,8 @@ async function pollStatus() {
 function buildBody() {
   const rule = $("rule").value;
   const body = { ticker: $("ticker").value.trim().toUpperCase(), rule,
-                 mode: $("mode").value, sort: $("sort").value };
+                 mode: $("mode").value, sort: $("sort").value,
+                 exclude_etf: $("exclude-etf").checked };
   if (rule === "ma_cross") { body.fast = +$("fast").value; body.slow = +$("slow").value; }
   else { body.ma = +$("ma").value; }
   return body;

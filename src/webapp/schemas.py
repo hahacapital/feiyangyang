@@ -27,6 +27,7 @@ class ScanRequest(BaseModel):
     top: int = 30
     top_k: int = 3
     cost_bps: float = 0.0
+    exclude_etf: bool = False           # drop ETF candidates from the backups
 
     @model_validator(mode="after")
     def _validate(self) -> "ScanRequest":

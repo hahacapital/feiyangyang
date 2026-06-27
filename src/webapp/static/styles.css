@@ -34,6 +34,8 @@ body{margin:0;min-height:100vh;
    font-family:var(--mono);font-size:14px;padding:9px 10px;border-radius:7px}
 .field input:focus,.field select:focus{outline:2px solid var(--live);outline-offset:1px}
 .dual{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.check{display:flex;align-items:center;gap:8px;margin:2px 0 10px;font-size:13px;color:var(--cash);cursor:pointer;user-select:none}
+.check input{width:16px;height:16px;min-width:16px;accent-color:var(--live);cursor:pointer}
 .hidden{display:none}
 .run{width:100%;margin-top:6px;padding:12px;font-family:var(--disp);font-weight:700;letter-spacing:.08em;
    background:var(--live);color:#04141b;border:0;border-radius:8px;cursor:pointer;font-size:14px}

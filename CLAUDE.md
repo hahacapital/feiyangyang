@@ -84,7 +84,10 @@ re-read), `jobs.py` (single-thread background scan registry), `cache_sync.py`
 Run as `uvicorn webapp.app:app` from `src/`, **single worker** (the warm cache +
 job registry are process-local). Engine reuse must exclude the primary from
 candidates, load the primary on demand, and build rule-specific params (the
-`curve_series`/`evaluate_iter` helpers are additive in `rebound.py`). Tests:
+`curve_series`/`evaluate_iter` helpers are additive in `rebound.py`). The optional
+`exclude_etf` scan flag drops ETF candidates using `engine_service.load_etf_set()`,
+which fetches the NASDAQ/NYSE symbol directories (ETF=Y col: nasdaqlisted 6,
+otherlisted 4) at warmup — best-effort, a no-op if the fetch fails. Tests:
 `src/test_webapp.py` (hand-rolled, no cache). Dev/offline: `FEIYANG_DEV_FIXTURE=1`.
 
 **Python ≥ 3.10 required** for the web layer (FastAPI 0.138.1 / uvicorn 0.49.0 /

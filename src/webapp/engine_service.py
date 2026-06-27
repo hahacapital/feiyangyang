@@ -25,6 +25,40 @@ WARM: dict[str, pd.DataFrame] = {}
 _load_primary = _dl.load_ohlc          # overridable in tests / dev
 _PROGRESS_EVERY = 50                    # batch SSE progress every N candidates
 
+# ETF tickers, for the optional "exclude ETFs" scan filter. Populated at warmup
+# from the NASDAQ/NYSE symbol directories (the ETF=Y column). The two files use
+# DIFFERENT ETF column indices: nasdaqlisted col 6, otherlisted col 4.
+ETF_TICKERS: set[str] = set()
+_ETF_SOURCES = [
+    ("https://www.nasdaqtrader.com/dynamic/SymDir/nasdaqlisted.txt", 6),
+    ("https://www.nasdaqtrader.com/dynamic/SymDir/otherlisted.txt", 4),
+]
+
+
+def load_etf_set() -> int:
+    """Best-effort fetch of the ETF ticker set from the NASDAQ/NYSE symbol
+    directories. On failure leaves ETF_TICKERS unchanged (exclude-ETF becomes a
+    no-op rather than an error). Returns the resulting set size."""
+    import urllib.request
+
+    etfs: set[str] = set()
+    for url, col in _ETF_SOURCES:
+        try:
+            with urllib.request.urlopen(url, timeout=20) as resp:
+                text = resp.read().decode("utf-8", "replace")
+        except Exception:
+            continue
+        for line in text.splitlines()[1:]:
+            parts = line.split("|")
+            if len(parts) > col and parts[col].strip() == "Y":
+                sym = parts[0].strip()
+                if sym:
+                    etfs.add(sym)
+    if etfs:
+        ETF_TICKERS.clear()
+        ETF_TICKERS.update(etfs)
+    return len(ETF_TICKERS)
+
 
 class PrimaryNotFound(Exception):
     """The requested primary ticker is not in the OHLC cache."""
@@ -65,6 +99,8 @@ def run_scan(req, *, progress_cb=None, cancel_event=None) -> dict:
     held = primary_held(primary_df, req.rule, **req.params())
     primary_ret = daily_returns(primary_df)
     candidate_frames = {t: f for t, f in WARM.items() if t != req.ticker}
+    if getattr(req, "exclude_etf", False) and ETF_TICKERS:
+        candidate_frames = {t: f for t, f in candidate_frames.items() if t not in ETF_TICKERS}
     total = len(candidate_frames)
 
     rows = []

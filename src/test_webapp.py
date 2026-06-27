@@ -327,6 +327,21 @@ def test_http_scan_curve():
         assert c.get("/api/scan/ZZZ-deadbeef/curve", params={"ticker": "GLD"}).status_code == 410
 
 
+def test_run_scan_exclude_etf():
+    import webapp.engine_service as es
+    _fixture()
+    es.ETF_TICKERS.clear(); es.ETF_TICKERS.add("QQQ")
+    try:
+        inc = es.run_scan(ScanRequest(ticker="TSLA", rule="price_above_ma", ma=20,
+                                      min_history=0, exclude_etf=False))
+        exc = es.run_scan(ScanRequest(ticker="TSLA", rule="price_above_ma", ma=20,
+                                      min_history=0, exclude_etf=True))
+        assert "QQQ" in {r["ticker"] for r in inc["ranked"]}
+        assert "QQQ" not in {r["ticker"] for r in exc["ranked"]}
+    finally:
+        es.ETF_TICKERS.clear()
+
+
 if __name__ == "__main__":
     tests = [
         ("ScanRequest ma_cross", test_scan_request_ma_cross_ok),
@@ -353,6 +368,7 @@ if __name__ == "__main__":
         ("idle policy endpoints", test_idle_policy_endpoints),
         ("single_curve engine", test_single_curve_engine),
         ("http scan curve", test_http_scan_curve),
+        ("run_scan exclude_etf", test_run_scan_exclude_etf),
     ]
     passed = failed = 0
     for name, fn in tests:
