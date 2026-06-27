@@ -19,6 +19,7 @@ class JobState:
         self.total = 0
         self.result: dict | None = None
         self.error: str | None = None
+        self.req = None                 # the ScanRequest, for on-demand single curves
         self.cancel_event = threading.Event()
 
 
@@ -30,6 +31,7 @@ _executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="scan")
 def submit(req, server_epoch: str) -> str:
     job_id = f"{server_epoch}-{uuid.uuid4().hex[:8]}"
     job = JobState()
+    job.req = req
     with _lock:
         _jobs[job_id] = job
     _executor.submit(_run, job_id, req)

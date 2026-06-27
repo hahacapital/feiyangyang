@@ -34,6 +34,10 @@ class ScanCancelled(Exception):
     """The scan was cancelled via its cancel_event."""
 
 
+class CandidateNotFound(Exception):
+    """The requested candidate ticker is not in the warm universe."""
+
+
 def warm_load(frames: dict) -> None:
     WARM.clear()
     WARM.update(frames)
@@ -93,6 +97,25 @@ def run_scan(req, *, progress_cb=None, cancel_event=None) -> dict:
         "ranked": ranked_out,
         "curves": curves,
     }
+
+
+def single_curve(req, ticker: str) -> dict:
+    """Combined equity curve for ONE candidate vs the primary, for click-to-view.
+
+    Reuses curve_series with the ticker as the sole pick over its full common
+    window with the primary, so the chart can redraw any ranked backup on demand
+    without re-running the whole scan."""
+    frame = WARM.get(ticker)
+    if frame is None:
+        raise CandidateNotFound(ticker)
+    try:
+        primary_df = _load_primary(req.ticker)
+    except FileNotFoundError as exc:
+        raise PrimaryNotFound(req.ticker) from exc
+    held = primary_held(primary_df, req.rule, **req.params())
+    primary_ret = daily_returns(primary_df)
+    return curve_series(primary_df, held, primary_ret, [{"ticker": ticker}],
+                        {ticker: frame}, mode=req.mode, top_k=1)
 
 
 def load_dev_fixture() -> None:

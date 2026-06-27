@@ -299,6 +299,34 @@ def test_idle_policy_endpoints():
         assert c.get("/api/idle-policy").json()["minutes"] == 30
 
 
+def test_single_curve_engine():
+    es = _fixture()
+    req = ScanRequest(ticker="TSLA", rule="price_above_ma", ma=20, mode="naked", min_history=0)
+    cs = es.single_curve(req, "GLD")
+    assert cs["dates"] and len(cs["picks"]) == 1 and cs["picks"][0]["ticker"] == "GLD"
+    try:
+        es.single_curve(req, "ZZZZ")
+        assert False, "expected CandidateNotFound"
+    except es.CandidateNotFound:
+        pass
+
+
+def test_http_scan_curve():
+    import time
+    with _client() as c:
+        r = c.post("/api/scan", json={"ticker": "DEMO", "rule": "ma_cross",
+                                      "fast": 5, "slow": 20, "top_k": 2, "min_history": 0})
+        jid = r.json()["job_id"]
+        for _ in range(200):
+            if c.get(f"/api/scan/{jid}/result").json().get("status") == "done":
+                break
+            time.sleep(0.02)
+        cv = c.get(f"/api/scan/{jid}/curve", params={"ticker": "GLD"})
+        assert cv.status_code == 200
+        assert cv.json()["curves"]["picks"][0]["ticker"] == "GLD"
+        assert c.get("/api/scan/ZZZ-deadbeef/curve", params={"ticker": "GLD"}).status_code == 410
+
+
 if __name__ == "__main__":
     tests = [
         ("ScanRequest ma_cross", test_scan_request_ma_cross_ok),
@@ -323,6 +351,8 @@ if __name__ == "__main__":
         ("cache sync fake client", test_sync_cache_with_fake_client),
         ("idle monitor logic", test_idle_monitor_logic),
         ("idle policy endpoints", test_idle_policy_endpoints),
+        ("single_curve engine", test_single_curve_engine),
+        ("http scan curve", test_http_scan_curve),
     ]
     passed = failed = 0
     for name, fn in tests:

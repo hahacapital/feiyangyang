@@ -30,7 +30,7 @@ body{margin:0;min-height:100vh;
 .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.22em;color:var(--cash);
    text-transform:uppercase;margin:0 0 12px;border-bottom:1px solid var(--edge);padding-bottom:8px}
 .field{display:flex;flex-direction:column;gap:5px;margin-bottom:11px;font-size:12px;color:var(--cash)}
-.field input,.field select{background:#161c25;border:1px solid var(--edge);color:var(--paper);
+.field input,.field select{width:100%;min-width:0;background:#161c25;border:1px solid var(--edge);color:var(--paper);
    font-family:var(--mono);font-size:14px;padding:9px 10px;border-radius:7px}
 .field input:focus,.field select:focus{outline:2px solid var(--live);outline-offset:1px}
 .dual{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -55,13 +55,17 @@ body{margin:0;min-height:100vh;
 .legend{display:flex;gap:14px;font-family:var(--mono);font-size:11px;color:var(--cash)}
 .legend i{display:inline-block;width:22px;height:0;border-top-width:2px;border-top-style:solid;margin-right:5px;vertical-align:middle}
 .legend .sw{width:13px;height:11px;border:1px solid var(--edge);display:inline-block;margin-right:5px;vertical-align:middle}
-.chart{height:460px;width:100%}
+.chart{height:480px;width:100%}
 .table{overflow-x:auto;font-family:var(--mono);font-size:12px}
 .table table{border-collapse:collapse;width:100%;white-space:nowrap}
 .table th,.table td{padding:7px 11px;text-align:right;border-bottom:1px solid #1c2430}
 .table th{color:var(--cash);font-weight:500;text-align:right;position:sticky;top:0}
 .table td:first-child,.table th:first-child,.table td:nth-child(2),.table th:nth-child(2){text-align:left}
-.table tr:first-child td{color:var(--live)}
+.table tbody tr{cursor:pointer;transition:background .12s}
+.table tbody tr:hover td{background:rgba(255,255,255,.04)}
+.table tbody tr.sel td{color:var(--live);background:rgba(43,184,230,.10)}
+.table tbody tr.sel td:nth-child(2){font-weight:600}
+.legend .hint{color:var(--edge)}
 .muted{color:var(--cash)}
 .neg{color:var(--drawdown)}
 @media(max-width:820px){.grid{grid-template-columns:1fr;
