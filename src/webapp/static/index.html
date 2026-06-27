@@ -40,6 +40,8 @@
             <option value="sharpe">sharpe</option><option value="total_return">total return</option>
           </select></label>
       </div>
+      <label class="check"><input type="checkbox" id="full-history" checked /><span>覆盖全回测窗口（避免短历史/未来函数）</span></label>
+      <label class="check"><input type="checkbox" id="sp500-only" /><span>仅大盘股（S&amp;P 500）</span></label>
       <label class="check"><input type="checkbox" id="exclude-etf" /><span>排除 ETF（只看个股）</span></label>
       <button id="run" class="run">RUN SCAN</button>
       <div id="progress" class="progress hidden"><div class="bar"><i></i></div><span class="readout"></span></div>

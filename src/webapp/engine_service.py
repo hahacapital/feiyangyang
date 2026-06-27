@@ -60,6 +60,37 @@ def load_etf_set() -> int:
     return len(ETF_TICKERS)
 
 
+# S&P 500 constituents, for the optional "large-caps only" scan filter (avoids the
+# micro-cap / penny-stock names that the full-universe antifragile sort surfaces).
+SP500_TICKERS: set[str] = set()
+_SP500_SOURCES = [
+    "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv",
+    "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv",
+]
+
+
+def load_sp500_set() -> int:
+    """Best-effort fetch of the S&P 500 constituent set (GitHub datahub CSV).
+    No-op on failure (the sp500-only filter just won't apply). Returns set size."""
+    import csv
+    import io
+    import urllib.request
+
+    for url in _SP500_SOURCES:
+        try:
+            with urllib.request.urlopen(url, timeout=20) as resp:
+                rows = list(csv.DictReader(io.StringIO(resp.read().decode("utf-8", "replace"))))
+        except Exception:
+            continue
+        col = next((c for c in (rows[0].keys() if rows else []) if c.lower() in ("symbol", "ticker")), None)
+        syms = {r[col].replace(".", "-").strip() for r in rows if col and r.get(col)}
+        if syms:
+            SP500_TICKERS.clear()
+            SP500_TICKERS.update(syms)
+            break
+    return len(SP500_TICKERS)
+
+
 class PrimaryNotFound(Exception):
     """The requested primary ticker is not in the OHLC cache."""
 
@@ -101,6 +132,8 @@ def run_scan(req, *, progress_cb=None, cancel_event=None) -> dict:
     candidate_frames = {t: f for t, f in WARM.items() if t != req.ticker}
     if getattr(req, "exclude_etf", False) and ETF_TICKERS:
         candidate_frames = {t: f for t, f in candidate_frames.items() if t not in ETF_TICKERS}
+    if getattr(req, "sp500_only", False) and SP500_TICKERS:
+        candidate_frames = {t: f for t, f in candidate_frames.items() if t in SP500_TICKERS}
     total = len(candidate_frames)
 
     rows = []
@@ -117,8 +150,13 @@ def run_scan(req, *, progress_cb=None, cancel_event=None) -> dict:
         progress_cb(0, 0)
 
     baselines = baseline_metrics(held, primary_ret)
+    min_hist = req.min_history_bars()
+    if getattr(req, "require_full_history", False):
+        # Backups must span ~all of the primary's window — you can't park in a name
+        # that didn't exist yet (the short-history survivorship/look-ahead trap).
+        min_hist = max(min_hist, int(0.9 * len(held)))
     ranked = rank_candidates(rows, sort_key=req.sort, max_dd_cap=req.max_dd_cap(),
-                             top=req.top, min_history_bars=req.min_history_bars())
+                             top=req.top, min_history_bars=min_hist)
     ranked_out = [{**r, "afscore": antifragile_score(r)} for r in ranked]
 
     as_of = str(held.index[-1])[:10]

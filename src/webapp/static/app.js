@@ -38,7 +38,9 @@ function buildBody() {
   const rule = $("rule").value;
   const body = { ticker: $("ticker").value.trim().toUpperCase(), rule,
                  mode: $("mode").value, sort: $("sort").value,
-                 exclude_etf: $("exclude-etf").checked };
+                 exclude_etf: $("exclude-etf").checked,
+                 require_full_history: $("full-history").checked,
+                 sp500_only: $("sp500-only").checked };
   if (rule === "ma_cross") { body.fast = +$("fast").value; body.slow = +$("slow").value; }
   else { body.ma = +$("ma").value; }
   return body;
@@ -64,29 +66,54 @@ async function runScan() {
   streamJob(job_id);
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 function streamJob(jobId) {
   const ev = new EventSource(`/api/scan/${jobId}/events`);
+  let finished = false;
   ev.addEventListener("progress", (m) => {
     const d = JSON.parse(m.data); setProgress(d.done, d.total);
   });
-  let finished = false;
-  ev.addEventListener("result", async (m) => {
-    finished = true;
-    ev.close();
+  ev.addEventListener("result", (m) => {
+    finished = true; ev.close();
     const d = JSON.parse(m.data);
-    $("progress").classList.add("hidden");
-    $("run").disabled = false;
     if (d.status !== "done") return failScan(d.error || "Scan did not complete.");
-    try {                                            // gzip-eligible JSON poll
-      const full = await (await fetch(`/api/scan/${jobId}/result`)).json();
-      render(full.result, jobId);
-    } catch { failScan("Could not load the result — please re-run."); }
+    loadAndRender(jobId);
   });
   ev.addEventListener("error", () => {
-    if (finished || ev.readyState === EventSource.CLOSED) return;  // ignore post-result close
-    ev.close();
-    failScan("Service restarted — please re-run.");
+    if (finished || ev.readyState === EventSource.CLOSED) return;
+    // The SSE dropped (network blip / ALB idle timeout on a long scan). The scan
+    // is still running server-side — don't give up, fall back to polling /result.
+    finished = true; ev.close();
+    pollResult(jobId);
   });
+}
+
+// Poll /result until the job finishes server-side, then render. Keeps the
+// progress bar moving so a dropped SSE doesn't look frozen.
+async function pollResult(jobId) {
+  for (let i = 0; i < 160; i++) {                    // ~6-8 min ceiling
+    let r;
+    try { r = await fetch(`/api/scan/${jobId}/result`); }
+    catch { await sleep(3000); continue; }
+    if (r.status === 410) return failScan("服务已更新，请重新扫描。");
+    const j = await r.json();
+    if (j.status === "done") { setProgress(j.done, j.total); return loadAndRender(jobId); }
+    if (j.status === "error") return failScan(j.error || "扫描失败，请重试。");
+    setProgress(j.done || 0, j.total || 0);
+    await sleep(2500);
+  }
+  failScan("扫描超时，请重试。");
+}
+
+async function loadAndRender(jobId) {
+  $("progress").classList.add("hidden");
+  $("run").disabled = false;
+  try {                                              // gzip-eligible JSON payload
+    const full = await (await fetch(`/api/scan/${jobId}/result`)).json();
+    if (!full || full.status === "unknown_job") return failScan("服务已更新，请重新扫描。");
+    render(full.result, jobId);
+  } catch { failScan("结果加载失败，请重试。"); }
 }
 
 function failScan(msg) {

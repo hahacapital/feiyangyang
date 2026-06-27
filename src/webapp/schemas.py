@@ -28,6 +28,8 @@ class ScanRequest(BaseModel):
     top_k: int = 3
     cost_bps: float = 0.0
     exclude_etf: bool = False           # drop ETF candidates from the backups
+    require_full_history: bool = True   # backups must span ~90% of the primary window
+    sp500_only: bool = False            # restrict candidates to S&P 500 constituents
 
     @model_validator(mode="after")
     def _validate(self) -> "ScanRequest":

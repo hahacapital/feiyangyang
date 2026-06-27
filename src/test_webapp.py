@@ -342,6 +342,26 @@ def test_run_scan_exclude_etf():
         es.ETF_TICKERS.clear()
 
 
+def test_run_scan_full_history_and_sp500():
+    import webapp.engine_service as es
+    primary = make_df(list(range(1, 401)))            # 400 bars
+    es.warm_load({"LONG": make_df([100 + i for i in range(400)]),   # common 400
+                  "MIDH": make_df([100 + i for i in range(300)])})  # common 300 (same start)
+    es.set_primary_loader(lambda t: primary)
+    base = dict(ticker="X", rule="price_above_ma", ma=20, min_history=0)
+    inc = es.run_scan(ScanRequest(require_full_history=False, **base))
+    assert "MIDH" in {r["ticker"] for r in inc["ranked"]}           # 300 >= min_overlap 252
+    full = es.run_scan(ScanRequest(require_full_history=True, **base))
+    ft = {r["ticker"] for r in full["ranked"]}
+    assert "MIDH" not in ft and "LONG" in ft                        # 300 < 0.9*400=360 -> dropped
+    es.SP500_TICKERS.clear(); es.SP500_TICKERS.add("LONG")
+    try:
+        sp = es.run_scan(ScanRequest(require_full_history=False, sp500_only=True, **base))
+        assert {r["ticker"] for r in sp["ranked"]} == {"LONG"}
+    finally:
+        es.SP500_TICKERS.clear()
+
+
 if __name__ == "__main__":
     tests = [
         ("ScanRequest ma_cross", test_scan_request_ma_cross_ok),
@@ -369,6 +389,7 @@ if __name__ == "__main__":
         ("single_curve engine", test_single_curve_engine),
         ("http scan curve", test_http_scan_curve),
         ("run_scan exclude_etf", test_run_scan_exclude_etf),
+        ("run_scan full_history + sp500", test_run_scan_full_history_and_sp500),
     ]
     passed = failed = 0
     for name, fn in tests:

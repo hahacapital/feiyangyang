@@ -84,10 +84,14 @@ re-read), `jobs.py` (single-thread background scan registry), `cache_sync.py`
 Run as `uvicorn webapp.app:app` from `src/`, **single worker** (the warm cache +
 job registry are process-local). Engine reuse must exclude the primary from
 candidates, load the primary on demand, and build rule-specific params (the
-`curve_series`/`evaluate_iter` helpers are additive in `rebound.py`). The optional
-`exclude_etf` scan flag drops ETF candidates using `engine_service.load_etf_set()`,
-which fetches the NASDAQ/NYSE symbol directories (ETF=Y col: nasdaqlisted 6,
-otherlisted 4) at warmup — best-effort, a no-op if the fetch fails. Tests:
+`curve_series`/`evaluate_iter` helpers are additive in `rebound.py`). Candidate
+filters (all best-effort, no-op if their warmup fetch fails): `exclude_etf` via
+`load_etf_set()` (NASDAQ/NYSE ETF=Y col — nasdaqlisted 6, otherlisted 4); `sp500_only`
+via `load_sp500_set()` (datahub CSV); and `require_full_history` (default **on**) which
+requires a backup to span ~90% of the primary's window — without it the antifragile
+sort surfaces short-history / micro-cap names (the ILLR survivorship trap). The SPA
+falls back to polling `/result` if the progress SSE drops mid-scan (a long scan can
+outlast the ALB idle timeout), so a dropped stream never loses a finished scan. Tests:
 `src/test_webapp.py` (hand-rolled, no cache). Dev/offline: `FEIYANG_DEV_FIXTURE=1`.
 
 **Python ≥ 3.10 required** for the web layer (FastAPI 0.138.1 / uvicorn 0.49.0 /
