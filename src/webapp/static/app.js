@@ -63,45 +63,25 @@ async function runScan() {
   if (res.status === 503) return failScan("Warming the cache — try again shortly.");
   if (!res.ok) return failScan("Scan failed to start.");
   const { job_id } = await res.json();
-  streamJob(job_id);
+  pollResult(job_id);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-function streamJob(jobId) {
-  const ev = new EventSource(`/api/scan/${jobId}/events`);
-  let finished = false;
-  ev.addEventListener("progress", (m) => {
-    const d = JSON.parse(m.data); setProgress(d.done, d.total);
-  });
-  ev.addEventListener("result", (m) => {
-    finished = true; ev.close();
-    const d = JSON.parse(m.data);
-    if (d.status !== "done") return failScan(d.error || "Scan did not complete.");
-    loadAndRender(jobId);
-  });
-  ev.addEventListener("error", () => {
-    if (finished || ev.readyState === EventSource.CLOSED) return;
-    // The SSE dropped (network blip / ALB idle timeout on a long scan). The scan
-    // is still running server-side — don't give up, fall back to polling /result.
-    finished = true; ev.close();
-    pollResult(jobId);
-  });
-}
-
-// Poll /result until the job finishes server-side, then render. Keeps the
-// progress bar moving so a dropped SSE doesn't look frozen.
+// Poll /result until the scan finishes server-side, then render. Pure short
+// requests (no long-lived SSE to drop on a 50s+ scan / network blip); a failed
+// poll just retries, so a transient drop never loses a finished scan.
 async function pollResult(jobId) {
-  for (let i = 0; i < 160; i++) {                    // ~6-8 min ceiling
+  for (let i = 0; i < 240; i++) {                    // ~8 min ceiling
     let r;
     try { r = await fetch(`/api/scan/${jobId}/result`); }
-    catch { await sleep(3000); continue; }
+    catch { await sleep(2000); continue; }           // transient network: retry
     if (r.status === 410) return failScan("服务已更新，请重新扫描。");
     const j = await r.json();
     if (j.status === "done") { setProgress(j.done, j.total); return loadAndRender(jobId); }
     if (j.status === "error") return failScan(j.error || "扫描失败，请重试。");
     setProgress(j.done || 0, j.total || 0);
-    await sleep(2500);
+    await sleep(2000);
   }
   failScan("扫描超时，请重试。");
 }
