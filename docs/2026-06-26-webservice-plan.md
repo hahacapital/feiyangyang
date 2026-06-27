@@ -2113,7 +2113,7 @@ else
   aws ecs create-service --cluster "$ECS_CLUSTER" --service-name "$ECS_SERVICE" \
     --task-definition "$TASK_DEF_ARN" --desired-count 1 --launch-type FARGATE \
     --health-check-grace-period-seconds 600 \
-    --deployment-configuration "minimumHealthyPercent=0,maximumPercent=100" \
+    --deployment-configuration "minimumHealthyPercent=100,maximumPercent=200" \
     --network-configuration "$NET" --load-balancers "$LB" --region "$AWS_REGION" >/dev/null
 fi
 echo "==> Done. Watch: aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --region $AWS_REGION"

@@ -362,7 +362,10 @@ the build (ARM64 or X86_64). Keep **default 20 GiB ephemeral storage** (cache <1
 - **`server_epoch`** (boot id) is returned in `/api/status` and every `job_id`. On a task
   replacement (deploy, OOM, AZ event) in-memory jobs are lost and a fresh warmup runs; unknown ids
   return **410** so the UI shows "Service restarted — please re-run" instead of hanging. Single task:
-  `minimumHealthyPercent:0, maximumPercent:100` (no rolling), brief downtime accepted.
+  `minimumHealthyPercent:100, maximumPercent:200` (rolling: start the new task, drain
+  the old → zero-downtime deploys; briefly runs two tasks). `0/100` was the original
+  single-task choice but its stop-old-then-start-new path incurred ~5 min downtime per
+  deploy (target-group deregistration drain), so the service uses 100/200.
 
 ### 10.5 deploy.sh & required inputs
 `deploy.sh`: `docker build` → ECR login + push → `register-task-definition` → `update-service` (or
