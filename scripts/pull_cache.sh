@@ -8,7 +8,7 @@
 # Requires the AWS CLI with credentials that can read the bucket.
 set -euo pipefail
 
-S3_DIR="s3://staking-ledger-bpt/jojo_quant/ohlc/"
+S3_DIR="s3://hahacapital-jp/jojo_quant/ohlc/"  # ap-northeast-1 (Tokyo)
 DEST="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/data/ohlc"
 
 mkdir -p "$DEST"

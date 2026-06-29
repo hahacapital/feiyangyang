@@ -28,7 +28,7 @@ commodity futures, refreshed daily) and backed up to S3. feiyangyang is a
 read-only **consumer** — pull the latest snapshot from S3:
 
 ```bash
-bash scripts/pull_cache.sh        # aws s3 sync s3://staking-ledger-bpt/jojo_quant/ohlc/ -> data/ohlc/
+bash scripts/pull_cache.sh        # aws s3 sync s3://hahacapital-jp/jojo_quant/ohlc/ -> data/ohlc/
 ```
 
 Requires the AWS CLI with read access to the bucket. `data/` is gitignored.
@@ -90,13 +90,61 @@ Three things, no report files:
 > window length, not in isolation. For short-history primaries, prefer a curated
 > `--candidates` pool of investable names.
 
+## Web service (STANDBY CONSOLE)
+
+A personal FastAPI app over the same engine: enter a ticker, pick a strategy, set
+params, run a background full-market scan with live progress, and read the ranked
+backups plus an interactive ECharts equity/regime/drawdown chart.
+
+### Run locally
+
+Requires **Python ≥ 3.10** (FastAPI 0.138.1 / uvicorn 0.49.0 / sse-starlette 3.4.5).
+
+```bash
+pip install -r requirements.txt
+# Offline demo (synthetic data, no cache/S3 needed):
+cd src && FEIYANG_DEV_FIXTURE=1 python3 -m uvicorn webapp.app:app --port 8000
+# Real data (needs the OHLC cache; pulled from S3 at startup, or pre-pull):
+bash scripts/pull_cache.sh
+cd src && python3 -m uvicorn webapp.app:app --port 8000
+```
+
+Open http://localhost:8000. Run the server with `src/` as the working dir (bare
+imports), and **a single worker only** — the ~1 GB warm cache and the in-memory
+job registry must live in one process.
+
+### Endpoints
+
+`GET /healthz` · `GET /api/status` · `GET /api/universe` · `POST /api/scan` →
+`{job_id}` · `GET /api/scan/{id}/result` (the SPA polls this for progress + result;
+a `GET /api/scan/{id}/events` SSE stream also exists) · `POST /api/curve` (stateless
+single-backup curve for click/lookup) · `GET|POST /api/idle-policy` · static SPA at `/`.
+
+### Tests
+
+Requires **Python ≥ 3.10** and both requirements files:
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt
+python3 src/test_webapp.py   # web layer (needs the deps; no cache)
+python3 src/test_rebound.py  # engine (no deps beyond pandas/numpy)
+```
+
+### Deploy (ECS Fargate, ap-northeast-1, cluster `ff`, ALB ff.theblueprint.xyz)
+
+See `deploy/README.md`. Container syncs the cache from S3 at startup, warms ~1 GB
+into RAM (1-3 min cold start), runs 2 vCPU / 8 GB always-on; an opt-in idle
+auto-stop toggle drops it to `desiredCount=0` to save cost (wake via
+`deploy/wake.sh`).
+
 ## Tests
 
 ```bash
-python3 src/test_rebound.py   # 18 assert-based cases, incl. an explicit no-look-ahead test
+python3 src/test_rebound.py   # engine: 22 assert-based cases, incl. an explicit no-look-ahead test
+python3 src/test_webapp.py    # web layer: 22 cases (needs Python >=3.10 + requirements-dev.txt; see Web service > Tests)
 ```
 
-Tests use synthetic in-memory data and need no cache.
+Tests use synthetic in-memory data and need no cache (the web-layer suite needs the deps installed).
 
 ## Layout
 
@@ -105,6 +153,9 @@ Tests use synthetic in-memory data and need no cache.
 | `src/rebound.py` | The finder: signal layer, daily-return stitching, metrics, ranking, table, plot, CLI |
 | `src/data_loader.py` | Read-only OHLC parquet cache reader |
 | `src/test_rebound.py` | Assert-based tests (no pytest) |
+| `src/webapp/` | FastAPI web service (routes, engine service, job registry, cache sync, idle auto-stop, ECharts SPA) |
+| `Dockerfile` | Single-worker container image for ECS Fargate deployment |
+| `deploy/` | ECS task definition, IAM policies, deploy/wake scripts |
 | `scripts/pull_cache.sh` | Sync the OHLC cache from S3 into `data/ohlc/` |
 | `docs/` | Design spec + implementation plan |
 | `data/` | OHLC cache + generated plots (gitignored) |

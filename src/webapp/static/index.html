@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>沸羊羊 · STANDBY CONSOLE</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;600&family=Archivo+Expanded:wght@600;700&family=Spline+Sans+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1 class="brand">沸羊羊 · <span>STANDBY CONSOLE</span></h1>
+    <div class="cache" id="cache-lamp"><span class="lamp warming"></span><span id="cache-text">connecting…</span></div>
+  </header>
+
+  <main class="grid">
+    <section class="console panel" aria-label="Scan controls">
+      <h2 class="eyebrow">CONSOLE</h2>
+      <label class="field"><span>Primary ticker</span>
+        <input id="ticker" autocomplete="off" placeholder="TSLA" /></label>
+      <label class="field"><span>Strategy</span>
+        <select id="rule">
+          <option value="ma_cross">MA cross (fast / slow)</option>
+          <option value="price_above_ma">Price above MA</option>
+        </select></label>
+      <div id="cross-fields" class="dual">
+        <label class="field"><span>Fast</span><input id="fast" type="number" value="5" min="2" /></label>
+        <label class="field"><span>Slow</span><input id="slow" type="number" value="30" min="3" /></label>
+      </div>
+      <label id="ma-field" class="field hidden"><span>MA window</span>
+        <input id="ma" type="number" value="120" min="2" /></label>
+      <div class="dual">
+        <label class="field"><span>Mode</span>
+          <select id="mode"><option value="naked">naked</option><option value="filtered">filtered</option></select></label>
+        <label class="field"><span>Sort</span>
+          <select id="sort">
+            <option value="antifragile">antifragile</option>
+            <option value="cagr">cagr</option><option value="calmar">calmar</option>
+            <option value="sharpe">sharpe</option><option value="total_return">total return</option>
+          </select></label>
+      </div>
+      <label class="check"><input type="checkbox" id="full-history" checked /><span>覆盖全回测窗口（避免短历史/未来函数）</span></label>
+      <label class="check"><input type="checkbox" id="sp500-only" /><span>仅大盘股（S&amp;P 500）</span></label>
+      <label class="check"><input type="checkbox" id="exclude-etf" /><span>排除 ETF（只看个股）</span></label>
+      <button id="run" class="run">RUN SCAN</button>
+      <div id="progress" class="progress hidden"><div class="bar"><i></i></div><span class="readout"></span></div>
+    </section>
+
+    <section class="verdict panel" aria-label="Recommendation">
+      <h2 class="eyebrow">STATE PLATE</h2>
+      <div id="state-plate" class="plate idle"><span class="lamp"></span><span class="plate-text">Pick a ticker and run a scan.</span></div>
+      <div id="gauges" class="gauges"></div>
+    </section>
+
+    <section class="chartwrap panel" aria-label="Equity, regime and drawdown">
+      <div class="chart-head"><h2 class="eyebrow">EQUITY · REGIME · DRAWDOWN</h2>
+        <div class="chart-tools">
+          <span class="ct-label">查看指定备胎</span>
+          <input id="custom-ticker" placeholder="如 AZO" autocomplete="off" />
+          <button id="view-ticker" type="button">看</button>
+        </div>
+        <div class="legend" id="legend"></div></div>
+      <div id="chart" class="chart"></div>
+    </section>
+
+    <section class="backups panel" aria-label="Ranked backups">
+      <h2 class="eyebrow">BACKUPS</h2>
+      <div id="table" class="table"><p class="muted">No scan yet.</p></div>
+    </section>
+  </main>
+
+  <script src="/vendor/echarts.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

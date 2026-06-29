@@ -5,3 +5,9 @@ data/
 __pycache__/
 *.pyc
 .env
+
+# Local dev virtualenv (python3.11; system python3 is 3.9 and can't run FastAPI)
+.venv/
+
+# subagent-driven-development scratch workspace
+.superpowers/
