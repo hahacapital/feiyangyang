@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
@@ -233,5 +233,19 @@ def set_idle_policy(policy: IdlePolicy) -> dict:
 
 # Static SPA — mounted LAST so /api/* wins. html=True serves index.html at "/".
 _STATIC = _HERE / "static"
+
+
+@app.get("/", include_in_schema=False)
+def index():
+    """Serve index.html with version-stamped asset URLs (?v=epoch). A reload picks
+    up new app.js/styles.css every deploy regardless of browser cache quirks —
+    fixes 'I deployed but the old UI is still showing'."""
+    html = (_STATIC / "index.html").read_text(encoding="utf-8")
+    v = STATE["server_epoch"]
+    html = (html.replace('src="/app.js"', f'src="/app.js?v={v}"')
+                .replace('href="/styles.css"', f'href="/styles.css?v={v}"'))
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache"})
+
+
 if _STATIC.is_dir():
     app.mount("/", StaticFiles(directory=str(_STATIC), html=True), name="static")
