@@ -68,3 +68,9 @@ class ScanRequest(BaseModel):
 
     def min_history_bars(self) -> int:
         return int(self.min_history * 252)
+
+
+class CurveRequest(ScanRequest):
+    """A scan request plus one candidate ticker — for the stateless single-curve
+    endpoint (chart any backup without depending on a prior job)."""
+    candidate: str

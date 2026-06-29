@@ -311,20 +311,13 @@ def test_single_curve_engine():
         pass
 
 
-def test_http_scan_curve():
-    import time
+def test_http_curve():
     with _client() as c:
-        r = c.post("/api/scan", json={"ticker": "DEMO", "rule": "ma_cross",
-                                      "fast": 5, "slow": 20, "top_k": 2, "min_history": 0})
-        jid = r.json()["job_id"]
-        for _ in range(200):
-            if c.get(f"/api/scan/{jid}/result").json().get("status") == "done":
-                break
-            time.sleep(0.02)
-        cv = c.get(f"/api/scan/{jid}/curve", params={"ticker": "GLD"})
+        body = {"ticker": "DEMO", "rule": "ma_cross", "fast": 5, "slow": 20, "candidate": "GLD"}
+        cv = c.post("/api/curve", json=body)
         assert cv.status_code == 200
         assert cv.json()["curves"]["picks"][0]["ticker"] == "GLD"
-        assert c.get("/api/scan/ZZZ-deadbeef/curve", params={"ticker": "GLD"}).status_code == 410
+        assert c.post("/api/curve", json={**body, "candidate": "ZZZZ"}).status_code == 404
 
 
 def test_run_scan_exclude_etf():
@@ -387,7 +380,7 @@ if __name__ == "__main__":
         ("idle monitor logic", test_idle_monitor_logic),
         ("idle policy endpoints", test_idle_policy_endpoints),
         ("single_curve engine", test_single_curve_engine),
-        ("http scan curve", test_http_scan_curve),
+        ("http curve (stateless)", test_http_curve),
         ("run_scan exclude_etf", test_run_scan_exclude_etf),
         ("run_scan full_history + sp500", test_run_scan_full_history_and_sp500),
     ]

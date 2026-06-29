@@ -28,7 +28,7 @@ if str(_HERE.parent) not in sys.path:
     sys.path.insert(0, str(_HERE.parent))
 
 from webapp import engine_service, jobs  # noqa: E402
-from webapp.schemas import ScanRequest    # noqa: E402
+from webapp.schemas import CurveRequest, ScanRequest    # noqa: E402
 
 STATE = {
     "ready": False,
@@ -167,20 +167,17 @@ def scan_result(job_id: str):
             "error": job.error, "result": job.result}
 
 
-@app.get("/api/scan/{job_id}/curve")
-def scan_curve(job_id: str, ticker: str):
-    """On-demand combined equity curve for one ranked backup (click-to-view)."""
-    job = jobs.get(job_id)
-    if job is None or not jobs.belongs_to_epoch(job_id, STATE["server_epoch"]):
-        return JSONResponse(status_code=410,
-                            content={"status": "unknown_job",
-                                     "server_epoch": STATE["server_epoch"]})
-    if job.req is None:
-        return JSONResponse(status_code=409, content={"error": "job has no request context"})
+@app.post("/api/curve")
+def curve(req: CurveRequest):
+    """Stateless single-backup equity curve. Takes the scan params + a candidate
+    ticker directly, so charting a backup never depends on a prior job surviving
+    (a restart/redeploy no longer freezes click-to-view)."""
+    if not STATE["ready"]:
+        return JSONResponse(status_code=503, content={"error": "Warming the cache — try again shortly."})
     try:
-        curves = engine_service.single_curve(job.req, ticker.upper())
+        curves = engine_service.single_curve(req, req.candidate.upper())
     except engine_service.CandidateNotFound:
-        return JSONResponse(status_code=404, content={"error": f"{ticker} not in the universe"})
+        return JSONResponse(status_code=404, content={"error": f"{req.candidate} not in the universe"})
     except engine_service.PrimaryNotFound:
         return JSONResponse(status_code=404, content={"error": "primary not in cache"})
     return {"curves": curves}

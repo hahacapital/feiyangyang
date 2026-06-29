@@ -116,8 +116,9 @@ job registry must live in one process.
 ### Endpoints
 
 `GET /healthz` · `GET /api/status` · `GET /api/universe` · `POST /api/scan` →
-`{job_id}` · `GET /api/scan/{id}/events` (SSE progress + result) ·
-`GET /api/scan/{id}/result` (poll) · `GET|POST /api/idle-policy` · static SPA at `/`.
+`{job_id}` · `GET /api/scan/{id}/result` (the SPA polls this for progress + result;
+a `GET /api/scan/{id}/events` SSE stream also exists) · `POST /api/curve` (stateless
+single-backup curve for click/lookup) · `GET|POST /api/idle-policy` · static SPA at `/`.
 
 ### Tests
 

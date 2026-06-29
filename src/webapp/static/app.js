@@ -63,6 +63,7 @@ async function runScan() {
   if (res.status === 503) return failScan("Warming the cache — try again shortly.");
   if (!res.ok) return failScan("Scan failed to start.");
   const { job_id } = await res.json();
+  G.body = body;                         // remember scan params for stateless /api/curve
   pollResult(job_id);
 }
 
@@ -164,21 +165,31 @@ function markSelected(ticker) {
     tr.classList.toggle("sel", tr.dataset.ticker === ticker));
 }
 
-// Click a backup row -> fetch its combined equity curve and redraw the chart.
+// Chart one backup's combined equity curve. Stateless (POSTs the scan params +
+// candidate) so it works even after the original job is gone (service restart).
 async function selectBackup(ticker) {
+  if (!G.body || !ticker) return;
   markSelected(ticker);
   let res;
   try {
-    res = await fetch(`/api/scan/${G.jobId}/curve?ticker=${encodeURIComponent(ticker)}`);
+    res = await fetch("/api/curve", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...G.body, candidate: ticker }) });
   } catch { return; }                    // transient network: keep the current chart
-  if (res.status === 410) {              // job gone (service restarted/redeployed)
-    setPlate("idle", "服务已更新，请重新扫描。");
-    return;
-  }
+  if (res.status === 404) return setPlate("idle", `${ticker} 不在缓存里。`);
   if (!res.ok) return;
   const j = await res.json();
   if (j && j.curves) renderChart(j.curves, ticker);
 }
+
+// "查看指定备胎" — chart an arbitrary ticker (e.g. compare AZO/ORLY to a reference).
+$("view-ticker").addEventListener("click", () => {
+  const t = $("custom-ticker").value.trim().toUpperCase();
+  if (t) selectBackup(t);
+});
+$("custom-ticker").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("view-ticker").click();
+});
 
 // ---- 3-panel chart: one hero backup (equity, log) / regime ribbon / drawdown ----
 function renderChart(curves, heroTicker) {

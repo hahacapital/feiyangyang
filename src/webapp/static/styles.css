@@ -54,6 +54,11 @@ body{margin:0;min-height:100vh;
 .gauges{display:flex;gap:18px;margin-top:14px;font-family:var(--mono);font-size:12px;color:var(--cash);flex-wrap:wrap}
 .gauges b{display:block;color:var(--paper);font-size:18px}
 .chart-head{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+.chart-tools{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:11px;color:var(--cash)}
+.chart-tools input{width:72px;background:#161c25;border:1px solid var(--edge);color:var(--paper);font-family:var(--mono);font-size:12px;padding:4px 7px;border-radius:5px}
+.chart-tools input:focus{outline:2px solid var(--live);outline-offset:1px}
+.chart-tools button{background:var(--edge);color:var(--paper);border:0;border-radius:5px;padding:5px 11px;cursor:pointer;font-family:var(--mono);font-size:12px}
+.chart-tools button:hover{background:var(--live);color:#04141b}
 .legend{display:flex;gap:14px;font-family:var(--mono);font-size:11px;color:var(--cash)}
 .legend i{display:inline-block;width:22px;height:0;border-top-width:2px;border-top-style:solid;margin-right:5px;vertical-align:middle}
 .legend .sw{width:13px;height:11px;border:1px solid var(--edge);display:inline-block;margin-right:5px;vertical-align:middle}
